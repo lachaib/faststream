@@ -213,7 +213,7 @@ class TestConsume(KafkaTestcaseConfig, BrokerRealConsumeTestcase):
 
     @pytest.mark.asyncio()
     @pytest.mark.slow()
-    async def test_consume_ack_by_raise(
+    async def test_consume_ack_by_raise_ack(
         self,
         queue: str,
     ) -> None:
@@ -237,6 +237,97 @@ class TestConsume(KafkaTestcaseConfig, BrokerRealConsumeTestcase):
                 AIOKafkaConsumer,
                 "commit",
                 spy_decorator(AIOKafkaConsumer.commit),
+            ) as m:
+                await asyncio.wait(
+                    (
+                        asyncio.create_task(
+                            br.publish(
+                                "hello",
+                                queue,
+                            ),
+                        ),
+                        asyncio.create_task(event.wait()),
+                    ),
+                    timeout=10,
+                )
+                m.mock.assert_called_once()
+
+        assert event.is_set()
+
+    @pytest.mark.asyncio()
+    @pytest.mark.slow()
+    async def test_reject_on_error_auto_ack_on_raise_custom_error(
+        self,
+        queue: str,
+    ) -> None:
+        event = asyncio.Event()
+
+        class CustomError(Exception): ...
+
+        consume_broker = self.get_broker(apply_types=True)
+
+        @consume_broker.subscriber(
+            queue,
+            group_id="test",
+            ack_policy=AckPolicy.REJECT_ON_ERROR,
+        )
+        async def handler(msg: KafkaMessage) -> None:
+            event.set()
+            raise CustomError
+
+        async with self.patch_broker(consume_broker) as br:
+            await br.start()
+
+            with patch.object(
+                AIOKafkaConsumer,
+                "commit",
+                spy_decorator(AIOKafkaConsumer.commit),
+            ) as m:
+                await asyncio.wait(
+                    (
+                        asyncio.create_task(
+                            br.publish(
+                                "hello",
+                                queue,
+                            ),
+                        ),
+                        asyncio.create_task(event.wait()),
+                    ),
+                    timeout=10,
+                )
+                m.mock.assert_called_once()
+
+        assert event.is_set()
+
+
+    @pytest.mark.asyncio()
+    @pytest.mark.slow()
+    async def test_nack_on_error_seeks_to_failed_message_offset(
+        self,
+        queue: str,
+    ) -> None:
+        event = asyncio.Event()
+
+        class CustomError(Exception): ...
+
+        consume_broker = self.get_broker(apply_types=True)
+
+        @consume_broker.subscriber(
+            queue,
+            group_id="test",
+            ack_policy=AckPolicy.NACK_ON_ERROR,
+        )
+        async def handler(msg: KafkaMessage) -> None:
+            event.set()
+            raise CustomError
+
+        async with self.patch_broker(consume_broker) as br:
+            await br.start()
+
+            with patch.object(
+                AIOKafkaConsumer,
+                "commit",
+                spy_decorator(AIOKafkaConsumer.seek),
             ) as m:
                 await asyncio.wait(
                     (
